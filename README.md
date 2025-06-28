@@ -1,4 +1,6 @@
-<img src="https://img.icons8.com/?size=100&id=32418&format=png&color=000000" class="logo" width="120"/>
+<p align="center">
+  <img src="https://img.icons8.com/?size=100&id=32418&format=png&color=000000" class="logo" width="120"/>
+</p>
 
 # docker-transcode
 
