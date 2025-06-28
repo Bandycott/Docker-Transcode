@@ -50,11 +50,11 @@ docker run -d \
   -v /path/to/output:/output \
   -v /etc/localtime:/etc/localtime:ro \
   linuxserver/ffmpeg \
-  bash /config/convert-igpu-mkv-bitdepth-log-pool-clean.sh
+  bash /config/convert.sh
 ```
 
 - Replace `/path/to/input` and `/path/to/output` with your actual directories.
-- Place `convert-igpu-mkv-bitdepth-log-pool-clean.sh` in the `/config` folder or adjust the path as needed.
+- Place `convert.sh` in the `/config` folder or adjust the path as needed.
 
 
 ### 3. Add Files
@@ -112,5 +112,5 @@ MAX_JOBS=2
 
 A venir
 
-[^1]: convert-igpu-mkv-bitdepth-log-pool-clean.sh
+[^1]: convert.sh
 
