@@ -17,19 +17,17 @@
 - **Maintains original folder structure** in `/output`.
 - **Progress display** in 10% increments during conversion.
 - **Detailed logging**:
-    - Global errors in `/tmp/erreurs_conversion.log`
-    - Per-file errors in `error.log` within the output directory.
+  - Global errors in `/tmp/erreurs_conversion.log`
+  - Per-file errors in `error.log` within the output directory.
 - **Parallel processing**: configurable pool (default: 2 concurrent jobs).
 - **Ignores `.log` files** in processing.
 - **Runs continuously**: watches `/input` for new files.
-
 
 ## Requirements
 
 - **Docker** (tested with [linuxserver/ffmpeg](https://hub.docker.com/r/linuxserver/ffmpeg))
 - **Intel® CPU with QuickSync** (tested on Intel® Core™ i5-14500)
 - **/dev/dri** mapped into the container for hardware acceleration
-
 
 ## Usage
 
@@ -40,7 +38,6 @@ Create two folders on your host:
 ```bash
 mkdir -p /path/to/input /path/to/output
 ```
-
 
 ### 2. Run the Container
 
@@ -58,7 +55,6 @@ docker run -d \
 - Replace `/path/to/input` and `/path/to/output` with your actual directories.
 - Place `convert.sh` in the `/config` folder or adjust the path as needed.
 
-
 ### 3. Add Files
 
 Drop your video files (MKV, MP4, etc.) into `/input`.
@@ -70,9 +66,8 @@ Converted files will appear in `/output` with the same folder structure.
 - **Bit depth** is detected and preserved if supported by your CPU/GPU.
 - **Progress** is printed to the console every 10% of conversion.
 - **Logs**:
-    - `/tmp/erreurs_conversion.log`: all global errors.
-    - `error.log` in each output folder: detailed per-file errors.
-
+  - `/tmp/erreurs_conversion.log`: all global errors.
+  - `error.log` in each output folder: detailed per-file errors.
 
 ## Configuration
 
@@ -82,7 +77,6 @@ You can adjust the number of concurrent jobs by editing the script variable:
 MAX_JOBS=2
 ```
 
-
 ## Example
 
 ```
@@ -90,12 +84,10 @@ MAX_JOBS=2
 /input/Series/Episode1.mp4 -->   /output/Series/Episode1.mp4
 ```
 
-
 ## Hardware Acceleration
 
 - Uses **Intel QuickSync (QSV)** for fast and efficient H.265 encoding.
 - Make sure `/dev/dri` is available and your CPU supports QSV (i5-14500: OK).
-
 
 ## Troubleshooting
 
@@ -103,16 +95,13 @@ MAX_JOBS=2
 - Check `error.log` in the output folder for file-specific issues.
 - Ensure your Docker image and host have the necessary VAAPI/QSV drivers.
 
-
 ## Author
 
 - **Bandycott**
 - Script version: 2.3 (June 2025)
-
 
 ## License
 
 A venir
 
 [^1]: convert.sh
-
