@@ -3,15 +3,15 @@
 ################################################################################
 # Script de conversion vidéo matériel (Intel QuickSync H.265)
 #
-# - Conversion automatique des vidéos de /input vers /output en H.265 (HEVC).
+# - Conversion automatique des vidéos du dossier d'entrée vers le dossier de sortie en H.265 (HEVC).
 # - Si le fichier source est MKV, conversion en MKV H.265 en conservant toutes
 #   les pistes audio, sous-titres et chapitres.
 # - Sinon, conversion en MP4 H.265 en conservant les pistes audio.
 # - Conserve la profondeur de couleur (bit depth) d’origine (8, 10 ou 12 bits)
 #   si le matériel le permet.
-# - Supprime le fichier source UNIQUEMENT si la conversion a réussi.
-# - Supprime le répertoire source s'il devient vide après la suppression du fichier.
-# - Respecte l'arborescence d'origine dans /output.
+# - Option de suppression du fichier source et de son répertoire parent (si vide)
+#   UNIQUEMENT si la conversion a réussi.
+# - Respecte l'arborescence d'origine dans le dossier de sortie.
 # - Affiche la progression de la conversion toutes les 10% dans la console.
 # - Journalise les erreurs dans /tmp/erreurs_conversion.log (global)
 #   et dans un fichier error.log détaillé dans le dossier de sortie.
@@ -19,18 +19,33 @@
 # - Gère un pool de conversions en parallèle : dès qu'un job se termine,
 #   un nouveau peut être lancé sans attendre les autres.
 #
-# Usage : Prévu pour être utilisé dans un conteneur Docker avec :
-#   /input  : répertoire source des vidéos à convertir.
-#   /output : répertoire de destination des vidéos converties.
+# Usage : Prévu pour être utilisé dans un conteneur Docker.
+#         La configuration se fait via les variables d'environnement.
+#
+# Variables d'environnement configurables :
+#   - DELETE_SOURCE     : Si "true", supprime le fichier et répertoire source après
+#                         conversion réussie. (défaut: "true")
+#   - MAX_JOBS          : Nombre de conversions en parallèle. (défaut: 2)
+#   - INPUT_DIR         : Répertoire source des vidéos à convertir. (défaut: /input)
+#   - OUTPUT_DIR        : Répertoire de destination des vidéos converties. (défaut: /output)
+#   - LOOP_WAIT_SECONDS : Temps d'attente en secondes entre chaque balayage du
+#                         dossier d'entrée. (défaut: 30)
 #
 # Auteur : (à compléter)
 # Date   : Juin 2025
-# Version: 2.3 (Suppression des répertoires vides après conversion)
+# Version: 3.0 (Configuration via variables d'environnement)
 
-# --- Variables Globales ---
+# --- Variables Configurables via l'Environnement ---
+DELETE_SOURCE="${DELETE_SOURCE:-true}"
+MAX_JOBS="${MAX_JOBS:-2}"
+INPUT_DIR="${INPUT_DIR:-/input}"
+OUTPUT_DIR="${OUTPUT_DIR:-/output}"
+LOOP_WAIT_SECONDS="${LOOP_WAIT_SECONDS:-30}"
+
+# --- Variables Globales Internes ---
 INSTALL_FLAG="/tmp/.install_done"
 GLOBAL_ERROR_LOG="/tmp/erreurs_conversion.log"
-MAX_JOBS=2                 # Nombre de conversions en parallèle
+
 
 ################################################################################
 # FONCTIONS UTILITAIRES
@@ -313,21 +328,28 @@ wait_for_slot() {
 # ------------------------------------------------------------------------------
 main_loop() {
     echo "--- Démarrage du script de conversion vidéo ---"
+    echo "Configuration :"
+    echo " - Dossier d'entrée   : $INPUT_DIR"
+    echo " - Dossier de sortie  : $OUTPUT_DIR"
+    echo " - Jobs parallèles    : $MAX_JOBS"
+    echo " - Suppression source : $DELETE_SOURCE"
+    echo " - Délai de boucle    : $LOOP_WAIT_SECONDS secondes"
+    echo "-----------------------------------------------"
     
     # Activation du mode "monitor" (job control), essentiel pour `jobs`.
     set -m
 
     install_dependencies
     
-    echo "--- Démarrage de la surveillance du répertoire /input ---"
+    echo "--- Démarrage de la surveillance du répertoire $INPUT_DIR ---"
     while true; do
         # Utilise 'find' comme un flux producteur. La boucle 'while read'
         # consomme chaque fichier un par un.
         # L'utilisation de 'find ... -print0 | while ... read -d ""' est
         # la méthode la plus robuste pour gérer tous les types de noms de fichiers.
-        find /input -type f -print0 | while IFS= read -r -d '' infile_full_path; do
+        find "$INPUT_DIR" -type f -print0 | while IFS= read -r -d '' infile_full_path; do
             # Récupère le chemin relatif pour les logs et le nom de sortie
-            local relpath="${infile_full_path#/input/}"
+            local relpath="${infile_full_path#$INPUT_DIR/}"
             local extension="${relpath##*.}"
 
             # Ignorer les fichiers .log
@@ -339,18 +361,17 @@ main_loop() {
 
             if [[ "${extension,,}" == "mkv" ]]; then
                 outname="${relpath%.*}.mkv"
-                outputfile="/output/$outname"
+                outputfile="$OUTPUT_DIR/$outname"
                 # Pour les MKV, conserver toutes les pistes et les chapitres,
                 # exclure les données d'attachement qui peuvent parfois poser problème ou ne pas être nécessaires.
                 ffmpeg_extra_maps="-map 0 -map -0:d" 
                 subtitle_copy_option="-c:s copy"
             else
                 outname="${relpath%.*}.mp4"
-                outputfile="/output/$outname"
+                outputfile="$OUTPUT_DIR/$outname"
                 # Pour les autres formats convertis en MP4, copier vidéo et audio par défaut.
                 # Les sous-titres sont souvent traités différemment en MP4 (text track, pas stream)
                 # et peuvent être encodés en dur si nécessaire via un filtre -vf subtitles=...
-                # ffmpeg_extra_maps="-map 0:v -map 0:a" 
                 ffmpeg_extra_maps="" 
                 subtitle_copy_option="" # Ne pas copier les sous-titres directement pour les MP4 par défaut
             fi
@@ -393,22 +414,29 @@ main_loop() {
                         echo "----------------------------------------------------"
                     } >> "$ffmpeg_log_detail"                
                 else
-                    # La conversion a réussi (status = 0), on supprime le fichier source
-                    echo "INFO: Suppression du fichier source réussi : $relpath"
-                    rm -f "$infile_full_path"
+                    # La conversion a réussi (status = 0)
+                    # On vérifie si la suppression est activée
+                    if [[ "${DELETE_SOURCE,,}" == "true" ]]; then
+                        echo "INFO: Suppression du fichier source réussi : $relpath"
+                        rm -f "$infile_full_path"
 
-                    # Supprimer récursivement les répertoires vides jusqu'à /input
-                    local current_dir=$(dirname "$infile_full_path")
-                    while [[ "$current_dir" != "/input" && "$current_dir" != "/" ]]; do
-                        # Vérifier si le répertoire est vide (ne contient que des entrées '.' et '..')
-                        if [ -z "$(ls -A "$current_dir")" ]; then
-                            echo "INFO: Suppression du répertoire source vide : $current_dir"
-                            rmdir "$current_dir" || break # Arrête si rmdir échoue (ex: non vide, permissions)
-                            current_dir=$(dirname "$current_dir") # Remonte au répertoire parent
-                        else
-                            break # Le répertoire n'est pas vide, on arrête de remonter
-                        fi
-                    done
+                        # Supprimer récursivement les répertoires vides jusqu'à INPUT_DIR
+                        local current_dir
+                        current_dir=$(dirname "$infile_full_path")
+                        # S'assurer qu'on ne supprime pas le dossier d'entrée lui-même
+                        while [[ "$current_dir" != "$INPUT_DIR" && "$current_dir" != "/" ]]; do
+                            # Vérifier si le répertoire est vide (ne contient que des entrées '.' et '..')
+                            if [ -z "$(ls -A "$current_dir")" ]; then
+                                echo "INFO: Suppression du répertoire source vide : $current_dir"
+                                rmdir "$current_dir" || break # Arrête si rmdir échoue (ex: non vide, permissions)
+                                current_dir=$(dirname "$current_dir") # Remonte au répertoire parent
+                            else
+                                break # Le répertoire n'est pas vide, on arrête de remonter
+                            fi
+                        done
+                    else
+                         echo "INFO: Conversion réussie. La suppression du fichier source est désactivée (DELETE_SOURCE!=true)."
+                    fi
                 fi
                 # Assurez-vous que le fichier temporaire est toujours supprimé, même en cas d'erreur
                 rm -f "$log_tmp"
@@ -419,8 +447,8 @@ main_loop() {
         # avant de faire une pause et de scanner de nouveau.
         wait
 
-        echo "--- Passe de vérification terminée. Attente de 30 secondes avant la prochaine. ---"
-        sleep 30
+        echo "--- Passe de vérification terminée. Attente de $LOOP_WAIT_SECONDS secondes avant la prochaine. ---"
+        sleep "$LOOP_WAIT_SECONDS"
     done
 }
 
