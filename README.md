@@ -8,38 +8,30 @@
 
 ## Features
 
-- **Automatic conversion** of all videos from `/input` to `/output` using H.265 (HEVC).
-- **MKV files** are converted to H.265 MKV, preserving all audio, subtitles, and chapters.
-- **Other formats** are converted to H.265 MP4, preserving audio tracks.
-- **Bit depth preservation** (8, 10, or 12 bits) when supported by hardware.
-- **Source deletion** only after successful conversion.
-- **Removes empty directories** in `/input` after processing.
-- **Maintains original folder structure** in `/output`.
-- **Progress display** in 10% increments during conversion.
-- **Detailed logging**:
-  - Global errors in `/tmp/erreurs_conversion.log`
-  - Per-file errors in `error.log` within the output directory.
-- **Parallel processing**: configurable pool (default: 2 concurrent jobs).
-- **Ignores `.log` files** in processing.
-- **Runs continuously**: watches `/input` for new files.
+- Automatic conversion of all videos from the input folder to the output folder in H.265 (HEVC)
+- **MKV files** are converted to H.265 MKV, preserving all audio, subtitles, and chapters
+- Other formats are converted to H.265 MP4, preserving audio tracks
+- Maintains the original folder structure in the output directory
+- Progress display in 10% increments in the console
+- Configurable parallel processing
+- Optional deletion of source files and empty folders after successful conversion
+- Continuous monitoring of the input folder
 
 ## Requirements
 
 - **Docker** (tested with [linuxserver/ffmpeg](https://hub.docker.com/r/linuxserver/ffmpeg))
-- **Intel® CPU with QuickSync** (tested on Intel® Core™ i5-14500)
+- **Intel® CPU with QuickSync**
 - **/dev/dri** mapped into the container for hardware acceleration
 
 ## Usage
 
-### 1. Prepare Folders
-
-Create two folders on your host:
+### 1. Prepare folders
 
 ```bash
 mkdir -p /path/to/input /path/to/output
 ```
 
-### 2. Run the Container
+### 2. Run the container
 
 ```bash
 docker run -d \
@@ -48,60 +40,56 @@ docker run -d \
   -v /path/to/input:/input \
   -v /path/to/output:/output \
   -v /etc/localtime:/etc/localtime:ro \
+  -e DELETE_SOURCE=true \
+  -e MAX_JOBS=2 \
+  -e LOOP_WAIT_SECONDS=30 \
   linuxserver/ffmpeg \
   bash /config/convert.sh
 ```
 
-- Replace `/path/to/input` and `/path/to/output` with your actual directories.
-- Place `convert.sh` in the `/config` folder or adjust the path as needed.
+- Adjust the environment variables as needed.
+- Place `convert.sh` in `/config` or adjust the path accordingly.
 
-### 3. Add Files
+### 3. Add files
 
-Drop your video files (MKV, MP4, etc.) into `/input`.
-Converted files will appear in `/output` with the same folder structure.
+Drop your videos into `/input`. Converted files will appear in `/output` with the same folder structure.
 
-## Script Details
+## Script details
 
-- **Dependencies** are installed automatically on first run (vainfo, intel-media-va-driver-non-free, etc.).
-- **Bit depth** is detected and preserved if supported by your CPU/GPU.
-- **Progress** is printed to the console every 10% of conversion.
+- **Dependencies** are installed automatically on first run (vainfo, intel-media-va-driver-non-free, etc.)
+- **Bit depth** is detected and preserved if supported
+- **Progress** is displayed every 10%
 - **Logs**:
-  - `/tmp/erreurs_conversion.log`: all global errors.
-  - `error.log` in each output folder: detailed per-file errors.
-
-## Configuration
-
-You can adjust the number of concurrent jobs by editing the script variable:
-
-```bash
-MAX_JOBS=2
-```
+  - `/tmp/erreurs_conversion.log`: global errors
+  - `error.log` in each output folder: detailed errors
+- **Source file and parent folder** are deleted only after successful conversion
+- **`.log` files** are ignored
 
 ## Example
 
 ```
-/input/Movies/Film1.mkv   -->   /output/Movies/Film1.mkv
+/input/Films/Film1.mkv   -->   /output/Films/Film1.mkv
 /input/Series/Episode1.mp4 -->   /output/Series/Episode1.mp4
 ```
 
-## Hardware Acceleration
+## Hardware acceleration
 
-- Uses **Intel QuickSync (QSV)** for fast and efficient H.265 encoding.
-- Make sure `/dev/dri` is available and your CPU supports QSV (i5-14500: OK).
+- Uses **Intel QuickSync (QSV)** for fast and efficient H.265 encoding
+- Make sure `/dev/dri` is available and your CPU supports QSV
 
 ## Troubleshooting
 
-- Check `/tmp/erreurs_conversion.log` for global errors.
-- Check `error.log` in the output folder for file-specific issues.
-- Ensure your Docker image and host have the necessary VAAPI/QSV drivers.
+- Check `/tmp/erreurs_conversion.log` for global errors
+- Check `error.log` in the output folder for per-file errors
+- Ensure your Docker image and host have the necessary VAAPI/QSV drivers
 
 ## Author
 
 - **Bandycott**
-- Script version: 2.3 (June 2025)
+- Script version: 3.0 (June 2025)
 
 ## License
 
-A venir
+TBD
 
 [^1]: convert.sh
