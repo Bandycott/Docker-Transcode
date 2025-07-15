@@ -3,37 +3,35 @@
 ################################################################################
 # Script de conversion vidéo matériel (Intel QuickSync H.265)
 #
-# - Conversion automatique des vidéos du dossier d'entrée vers le dossier de sortie en H.265 (HEVC).
-# - Si le fichier source est MKV, conversion en MKV H.265 en conservant toutes
-#   les pistes audio, sous-titres et chapitres.
-# - Sinon, conversion en MP4 H.265 en conservant les pistes audio.
-# - Conserve la profondeur de couleur (bit depth) d’origine (8, 10 ou 12 bits)
-#   si le matériel le permet.
-# - Option de suppression du fichier source et de son répertoire parent (si vide)
-#   UNIQUEMENT si la conversion a réussi.
-# - Respecte l'arborescence d'origine dans le dossier de sortie.
-# - Affiche la progression de la conversion toutes les 10% dans la console.
-# - Journalise les erreurs dans /tmp/erreurs_conversion.log (global)
-#   et dans un fichier error.log détaillé dans le dossier de sortie.
-# - Ignore les fichiers .log lors du traitement.
-# - Gère un pool de conversions en parallèle : dès qu'un job se termine,
-#   un nouveau peut être lancé sans attendre les autres.
+# Description :
+#   - Conversion automatique des vidéos du dossier d'entrée vers le dossier de sortie en H.265 (HEVC) avec gestion matérielle Intel QSV.
+#   - Conversion MKV → MKV H.265 (toutes pistes audio, sous-titres, chapitres conservés).
+#   - Conversion autres formats → MP4 H.265 (pistes audio conservées).
+#   - Détection et conservation automatique de la profondeur de couleur (8, 10 ou 12 bits) si supportée par le matériel.
+#   - Suppression optionnelle du fichier source et de son répertoire parent (si vide) après conversion réussie.
+#   - Respect de l'arborescence d'origine dans le dossier de sortie.
+#   - Affichage de la progression toutes les 10% dans la console.
+#   - Journalisation des erreurs :
+#       - /tmp/erreurs_conversion.log (global)
+#       - error.log détaillé dans le dossier de sortie
+#   - Ignoré : fichiers .log
+#   - Pool de conversions en parallèle : MAX_JOBS (nouveau job dès qu'un slot se libère)
+#   - Dépendances installées automatiquement au premier lancement (ffmpeg, vainfo, drivers QSV...)
 #
-# Usage : Prévu pour être utilisé dans un conteneur Docker.
-#         La configuration se fait via les variables d'environnement.
+# Usage :
+#   - Prévu pour une utilisation en conteneur Docker.
+#   - Configuration via variables d'environnement.
 #
 # Variables d'environnement configurables :
-#   - DELETE_SOURCE     : Si "true", supprime le fichier et répertoire source après
-#                         conversion réussie. (défaut: "true")
-#   - MAX_JOBS          : Nombre de conversions en parallèle. (défaut: 2)
-#   - INPUT_DIR         : Répertoire source des vidéos à convertir. (défaut: /input)
-#   - OUTPUT_DIR        : Répertoire de destination des vidéos converties. (défaut: /output)
-#   - LOOP_WAIT_SECONDS : Temps d'attente en secondes entre chaque balayage du
-#                         dossier d'entrée. (défaut: 30)
+#   - DELETE_SOURCE     : "true" pour supprimer le fichier et répertoire source après conversion réussie (défaut: "true")
+#   - MAX_JOBS          : Nombre de conversions en parallèle (défaut: 2)
+#   - INPUT_DIR         : Répertoire source des vidéos à convertir (défaut: /input)
+#   - OUTPUT_DIR        : Répertoire de destination des vidéos converties (défaut: /output)
+#   - LOOP_WAIT_SECONDS : Délai (s) entre chaque balayage du dossier d'entrée (défaut: 30)
 #
-# Auteur : (à compléter)
-# Date   : Juin 2025
-# Version: 3.0 (Configuration via variables d'environnement)
+# Auteur : Bandycott
+# Date   : Juillet 2025
+# Version: 3.1 (Filtrage des extensions de fichier est effectué afin de ne traiter que les fichiers multimédias compatibles)
 
 # --- Variables Configurables via l'Environnement ---
 DELETE_SOURCE="${DELETE_SOURCE:-true}"
@@ -343,16 +341,24 @@ main_loop() {
     
     echo "--- Démarrage de la surveillance du répertoire $INPUT_DIR ---"
     while true; do
-        # Utilise 'find' comme un flux producteur. La boucle 'while read'
-        # consomme chaque fichier un par un.
-        # L'utilisation de 'find ... -print0 | while ... read -d ""' est
-        # la méthode la plus robuste pour gérer tous les types de noms de fichiers.
-        find "$INPUT_DIR" -type f -print0 | while IFS= read -r -d '' infile_full_path; do
+        # Utilise 'find' pour ne sélectionner que les fichiers avec des extensions vidéo.
+        # L'utilisation de '-iname' rend la recherche insensible à la casse (ex: .mkv, .MKV).
+        # Le '-print0 | while ... read -d ""' gère les noms de fichiers avec des espaces ou caractères spéciaux.
+        find "$INPUT_DIR" -type f \( \
+            -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o \
+            -iname "*.mov" -o -iname "*.wmv" -o -iname "*.flv" -o \
+            -iname "*.webm" -o -iname "*.mpeg" -o -iname "*.mpg" -o \
+            -iname "*.m4v" -o -iname "*.ts" -o -iname "*.mts" -o \
+            -iname "*.m2ts" -o -iname "*.3gp" -o -iname "*.vob" -o \
+            -iname "*.ogv" -o -iname "*.divx" -o -iname "*.f4v" -o \
+            -iname "*.rm" -o -iname "*.rmvb" -o -iname "*.asf" -o \
+            -iname "*.mxf" -o -iname "*.nut" -o -iname "*.amv" \
+        \) -print0 | while IFS= read -r -d '' infile_full_path; do
             # Récupère le chemin relatif pour les logs et le nom de sortie
             local relpath="${infile_full_path#$INPUT_DIR/}"
             local extension="${relpath##*.}"
 
-            # Ignorer les fichiers .log
+            # Ignorer les fichiers .log (mesure de sécurité additionnelle)
             if [[ "${extension,,}" == "log" ]]; then
                 continue
             fi
