@@ -40,9 +40,10 @@ docker run -d \
   -v /path/to/input:/input \
   -v /path/to/output:/output \
   -v /etc/localtime:/etc/localtime:ro \
-  -e DELETE_SOURCE=true \
-  -e MAX_JOBS=2 \
-  -e LOOP_WAIT_SECONDS=30 \
+    -e DELETE_SOURCE=true \
+    -e MAX_JOBS=2 \
+    -e LOOP_WAIT_SECONDS=30 \
+    -e WEBHOOK_URL="https://discord.com/api/webhooks/xxxx/yyyy" \
   linuxserver/ffmpeg \
   bash /config/convert.sh
 ```
@@ -56,6 +57,13 @@ Drop your videos into `/input`. Converted files will appear in `/output` with th
 
 ## Script details
 
+- **Notifications Discord** :
+  - Activez les notifications en définissant la variable d'environnement `WEBHOOK_URL` avec l'URL de votre webhook Discord.
+  - Vous recevrez des notifications pour :
+    - Début du traitement d'un fichier
+    - Fin (succès ou échec) du traitement d'un fichier
+    - Fin globale du traitement (tous les fichiers traités)
+  - La notification de fin globale n'est envoyée qu'une seule fois par session.
 - **Dependencies** are installed automatically on first run (vainfo, intel-media-va-driver-non-free, etc.)
 - **Bit depth** is detected and preserved if supported
 - **Progress** is displayed every 10%
@@ -86,7 +94,7 @@ Drop your videos into `/input`. Converted files will appear in `/output` with th
 ## Author
 
 - **Bandycott**
-- Script version: 3.0 (June 2025)
+- Script version: 3.2 (Août 2025)
 
 ## License
 
