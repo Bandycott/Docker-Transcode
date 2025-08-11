@@ -14,6 +14,9 @@
 #   - Journalisation des erreurs :
 #       - /tmp/erreurs_conversion.log (global)
 #       - error.log détaillé dans le dossier de sortie
+#   - Notifications Discord via Webhook :
+#       - Début, succès, échec et fin globale du traitement de chaque fichier
+#       - Gestion avancée pour éviter les doublons et suivre l'état de chaque fichier
 #   - Ignoré : fichiers .log
 #   - Pool de conversions en parallèle : MAX_JOBS (nouveau job dès qu'un slot se libère)
 #   - Dépendances installées automatiquement au premier lancement (ffmpeg, vainfo, drivers QSV...)
@@ -28,10 +31,11 @@
 #   - INPUT_DIR         : Répertoire source des vidéos à convertir (défaut: /input)
 #   - OUTPUT_DIR        : Répertoire de destination des vidéos converties (défaut: /output)
 #   - LOOP_WAIT_SECONDS : Délai (s) entre chaque balayage du dossier d'entrée (défaut: 30)
+#   - WEBHOOK_URL       : URL du webhook Discord pour les notifications (optionnel)
 #
 # Auteur : Bandycott
-# Date   : Juillet 2025
-# Version: 3.1 (Filtrage des extensions de fichier est effectué afin de ne traiter que les fichiers multimédias compatibles)
+# Date   : Août 2025
+# Version: 3.2 (Notifications Discord Webhook, gestion avancée des statuts de traitement)
 
 # --- Variables Configurables via l'Environnement ---
 DELETE_SOURCE="${DELETE_SOURCE:-true}"
@@ -39,6 +43,7 @@ MAX_JOBS="${MAX_JOBS:-2}"
 INPUT_DIR="${INPUT_DIR:-/input}"
 OUTPUT_DIR="${OUTPUT_DIR:-/output}"
 LOOP_WAIT_SECONDS="${LOOP_WAIT_SECONDS:-30}"
+WEBHOOK_URL="${WEBHOOK_URL:-}" # URL du webhook Discord (optionnel)
 
 # --- Variables Globales Internes ---
 INSTALL_FLAG="/tmp/.install_done"
@@ -72,6 +77,23 @@ install_dependencies() {
             exit 1
         fi
     fi
+}
+
+# ------------------------------------------------------------------------------
+# send_discord_webhook
+# But : Envoie une notification Discord via Webhook si WEBHOOK_URL est défini.
+# Entrées :
+#   $1 : Message à envoyer
+# Sorties : Aucune
+# Retourne : 0 si succès, 1 si échec
+# ------------------------------------------------------------------------------
+send_discord_webhook() {
+    local message="$1"
+    if [[ -n "$WEBHOOK_URL" ]]; then
+        curl -s -H "Content-Type: application/json" -X POST -d "{\"content\": \"$message\"}" "$WEBHOOK_URL" > /dev/null
+        return $?
+    fi
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -196,6 +218,8 @@ convert_file() {
     local ffmpeg_log_tmp="$6" # Reçoit le chemin du fichier temporaire généré par mktemp
 
     echo "INFO: Début de conversion : $relpath"
+    # Notification Discord : début de traitement du fichier
+    send_discord_webhook "🟡 Début du traitement : $relpath"
 
     # Crée le répertoire de sortie si nécessaire
     mkdir -p "$(dirname "$outputfile")" || {
@@ -286,9 +310,13 @@ convert_file() {
 
     if [[ $retcode -eq 0 ]]; then
         echo "INFO: Conversion réussie : $relpath (durée : $elapsed_hms)"
+        # Notification Discord : fichier traité
+        send_discord_webhook "✅ Fichier traité : $relpath\nDurée de conversion : $elapsed_hms"
         # Note : Le fichier ffmpeg_log_tmp est supprimé par le shell parent après traitement
     else
         echo "ERREUR: Échec de la conversion de $relpath" | tee -a "$GLOBAL_ERROR_LOG"
+        # Notification Discord : échec de traitement
+        send_discord_webhook "❌ Échec du traitement : $relpath\nConsultez les logs pour plus de détails."
     fi
     return $retcode
 }
@@ -452,6 +480,43 @@ main_loop() {
         # Attendre la fin de tous les jobs lancés lors de cette passe de 'find'
         # avant de faire une pause et de scanner de nouveau.
         wait
+
+        # Vérification : notification de fin de passe uniquement si tous les fichiers présents dans INPUT_DIR ont été traités (succès ou échec)
+        # Un fichier est considéré comme traité si :
+        #   - il n'est plus présent dans INPUT_DIR
+        #   - ou il existe un fichier de sortie (dans OUTPUT_DIR) même vide
+        local unprocessed_count=0
+        while IFS= read -r -d '' infile_full_path; do
+            relpath="${infile_full_path#$INPUT_DIR/}"
+            extension="${relpath##*.}"
+            if [[ "${extension,,}" == "mkv" ]]; then
+                outname="${relpath%.*}.mkv"
+            else
+                outname="${relpath%.*}.mp4"
+            fi
+            outputfile="$OUTPUT_DIR/$outname"
+            # Si le fichier de sortie n'existe pas, le fichier n'est pas traité
+            if [[ ! -f "$outputfile" ]]; then
+                unprocessed_count=$((unprocessed_count+1))
+            fi
+        done < <(find "$INPUT_DIR" -type f \(
+            -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o 
+            -iname "*.mov" -o -iname "*.wmv" -o -iname "*.flv" -o 
+            -iname "*.webm" -o -iname "*.mpeg" -o -iname "*.mpg" -o 
+            -iname "*.m4v" -o -iname "*.ts" -o -iname "*.mts" -o 
+            -iname "*.m2ts" -o -iname "*.3gp" -o -iname "*.vob" -o 
+            -iname "*.ogv" -o -iname "*.divx" -o -iname "*.f4v" -o 
+            -iname "*.rm" -o -iname "*.rmvb" -o -iname "*.asf" -o 
+            -iname "*.mxf" -o -iname "*.nut" -o -iname "*.amv" 
+        \) -print0)
+        if [[ "$unprocessed_count" -eq 0 ]]; then
+            # Notification de fin de traitement global envoyée une seule fois grâce à un fichier flag
+            local global_done_flag="/tmp/.discord_global_done.flag"
+            if [[ ! -f "$global_done_flag" ]]; then
+                send_discord_webhook "🎉 Tous les fichiers présents dans le dossier d'entrée ont été traités (succès ou échec)."
+                touch "$global_done_flag"
+            fi
+        fi
 
         echo "--- Passe de vérification terminée. Attente de $LOOP_WAIT_SECONDS secondes avant la prochaine. ---"
         sleep "$LOOP_WAIT_SECONDS"
