@@ -17,6 +17,7 @@
 #   - Notifications Discord via Webhook :
 #       - Début, succès, échec et fin globale du traitement de chaque fichier
 #       - Gestion avancée pour éviter les doublons et suivre l'état de chaque fichier
+#   - Un fichier de sortie de 0 ko est considéré comme non traité (pour la notification globale)
 #   - Ignoré : fichiers .log
 #   - Pool de conversions en parallèle : MAX_JOBS (nouveau job dès qu'un slot se libère)
 #   - Dépendances installées automatiquement au premier lancement (ffmpeg, vainfo, drivers QSV...)
@@ -35,7 +36,7 @@
 #
 # Auteur : Bandycott
 # Date   : Août 2025
-# Version: 3.2 (Notifications Discord Webhook, gestion avancée des statuts de traitement)
+# Version: 3.2 (Notifications Discord Webhook, gestion avancée des statuts de traitement, détection des fichiers de sortie vides)
 
 # --- Variables Configurables via l'Environnement ---
 DELETE_SOURCE="${DELETE_SOURCE:-true}"
@@ -369,10 +370,8 @@ main_loop() {
     
     echo "--- Démarrage de la surveillance du répertoire $INPUT_DIR ---"
     while true; do
-        # Utilise 'find' pour ne sélectionner que les fichiers avec des extensions vidéo.
-        # L'utilisation de '-iname' rend la recherche insensible à la casse (ex: .mkv, .MKV).
-        # Le '-print0 | while ... read -d ""' gère les noms de fichiers avec des espaces ou caractères spéciaux.
-        find "$INPUT_DIR" -type f \( \
+        # Récupérer la liste des fichiers à traiter
+        mapfile -d '' files < <(find "$INPUT_DIR" -type f \( \
             -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o \
             -iname "*.mov" -o -iname "*.wmv" -o -iname "*.flv" -o \
             -iname "*.webm" -o -iname "*.mpeg" -o -iname "*.mpg" -o \
@@ -381,33 +380,30 @@ main_loop() {
             -iname "*.ogv" -o -iname "*.divx" -o -iname "*.f4v" -o \
             -iname "*.rm" -o -iname "*.rmvb" -o -iname "*.asf" -o \
             -iname "*.mxf" -o -iname "*.nut" -o -iname "*.amv" \
-        \) -print0 | while IFS= read -r -d '' infile_full_path; do
-            # Récupère le chemin relatif pour les logs et le nom de sortie
-            local relpath="${infile_full_path#$INPUT_DIR/}"
-            local extension="${relpath##*.}"
+        \) -print0)
 
-            # Ignorer les fichiers .log (mesure de sécurité additionnelle)
+        # Pool de jobs (PID)
+        pids=()
+
+        for infile_full_path in "${files[@]}"; do
+            relpath="${infile_full_path#$INPUT_DIR/}"
+            extension="${relpath##*.}"
+
+            # Ignorer les fichiers .log
             if [[ "${extension,,}" == "log" ]]; then
                 continue
             fi
 
-            local outname outputfile ffmpeg_extra_maps subtitle_copy_option
-
             if [[ "${extension,,}" == "mkv" ]]; then
                 outname="${relpath%.*}.mkv"
                 outputfile="$OUTPUT_DIR/$outname"
-                # Pour les MKV, conserver toutes les pistes et les chapitres,
-                # exclure les données d'attachement qui peuvent parfois poser problème ou ne pas être nécessaires.
-                ffmpeg_extra_maps="-map 0 -map -0:d" 
+                ffmpeg_extra_maps="-map 0 -map -0:d"
                 subtitle_copy_option="-c:s copy"
             else
                 outname="${relpath%.*}.mp4"
                 outputfile="$OUTPUT_DIR/$outname"
-                # Pour les autres formats convertis en MP4, copier vidéo et audio par défaut.
-                # Les sous-titres sont souvent traités différemment en MP4 (text track, pas stream)
-                # et peuvent être encodés en dur si nécessaire via un filtre -vf subtitles=...
-                ffmpeg_extra_maps="" 
-                subtitle_copy_option="" # Ne pas copier les sous-titres directement pour les MP4 par défaut
+                ffmpeg_extra_maps=""
+                subtitle_copy_option=""
             fi
 
             # Si le fichier de sortie existe déjà, on saute le traitement.
@@ -415,26 +411,29 @@ main_loop() {
                 continue
             fi
 
-            # Attendre une place libre dans le pool avant de lancer la conversion
-            wait_for_slot
+            # Attendre si le pool est plein
+            while [ "${#pids[@]}" -ge "$MAX_JOBS" ]; do
+                for i in "${!pids[@]}"; do
+                    if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+                        wait "${pids[$i]}"
+                        unset 'pids[i]'
+                    fi
+                done
+                pids=("${pids[@]}") # Réindexer le tableau
+                sleep 0.5
+            done
 
-            # Lancer la conversion en arrière-plan dans un sous-shell
             (
-                local outdir
                 outdir="$(dirname "$outputfile")"
-                
-                # Utiliser mktemp pour générer un nom de fichier temporaire sûr et court
-                local log_tmp=$(mktemp /tmp/ffmpeg_log_XXXXXX.log)
+                log_tmp=$(mktemp /tmp/ffmpeg_log_XXXXXX.log)
                 if [[ ! -f "$log_tmp" ]]; then
                     echo "ERREUR: Impossible de créer un fichier temporaire pour le log FFMPEG." | tee -a "$GLOBAL_ERROR_LOG"
-                    exit 1 # Quitter ce sous-shell si mktemp échoue
+                    exit 1
                 fi
-                
                 convert_file "$infile_full_path" "$relpath" "$outputfile" "$ffmpeg_extra_maps" "$subtitle_copy_option" "$log_tmp"
-                local status=$?
-
+                status=$?
                 if [[ $status -ne 0 ]]; then
-                    local ffmpeg_log_detail="$outdir/error.log"
+                    ffmpeg_log_detail="$outdir/error.log"
                     {
                         echo "----------------------------------------------------"
                         echo "Date : $(date '+%Y-%m-%d %H:%M:%S')"
@@ -446,40 +445,34 @@ main_loop() {
                         echo "---- DÉTAILS DE L'ERREUR FFMPEG ----"
                         cat "$log_tmp"
                         echo "----------------------------------------------------"
-                    } >> "$ffmpeg_log_detail"                
+                    } >> "$ffmpeg_log_detail"
                 else
-                    # La conversion a réussi (status = 0)
-                    # On vérifie si la suppression est activée
                     if [[ "${DELETE_SOURCE,,}" == "true" ]]; then
                         echo "INFO: Suppression du fichier source réussi : $relpath"
                         rm -f "$infile_full_path"
-
-                        # Supprimer récursivement les répertoires vides jusqu'à INPUT_DIR
-                        local current_dir
                         current_dir=$(dirname "$infile_full_path")
-                        # S'assurer qu'on ne supprime pas le dossier d'entrée lui-même
                         while [[ "$current_dir" != "$INPUT_DIR" && "$current_dir" != "/" ]]; do
-                            # Vérifier si le répertoire est vide (ne contient que des entrées '.' et '..')
                             if [ -z "$(ls -A "$current_dir")" ]; then
                                 echo "INFO: Suppression du répertoire source vide : $current_dir"
-                                rmdir "$current_dir" || break # Arrête si rmdir échoue (ex: non vide, permissions)
-                                current_dir=$(dirname "$current_dir") # Remonte au répertoire parent
+                                rmdir "$current_dir" || break
+                                current_dir=$(dirname "$current_dir")
                             else
-                                break # Le répertoire n'est pas vide, on arrête de remonter
+                                break
                             fi
                         done
                     else
-                         echo "INFO: Conversion réussie. La suppression du fichier source est désactivée (DELETE_SOURCE!=true)."
+                        echo "INFO: Conversion réussie. La suppression du fichier source est désactivée (DELETE_SOURCE!=true)."
                     fi
                 fi
-                # Assurez-vous que le fichier temporaire est toujours supprimé, même en cas d'erreur
                 rm -f "$log_tmp"
             ) &
+            pids+=($!)
         done
 
-        # Attendre la fin de tous les jobs lancés lors de cette passe de 'find'
-        # avant de faire une pause et de scanner de nouveau.
-        wait
+        # Attendre la fin de tous les jobs
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+        done
 
         # Vérification : notification de fin de passe uniquement si tous les fichiers présents dans INPUT_DIR ont été traités (succès ou échec)
         # Un fichier est considéré comme traité si :
@@ -495,8 +488,8 @@ main_loop() {
                 outname="${relpath%.*}.mp4"
             fi
             outputfile="$OUTPUT_DIR/$outname"
-            # Si le fichier de sortie n'existe pas, le fichier n'est pas traité
-            if [[ ! -f "$outputfile" ]]; then
+            # Si le fichier de sortie n'existe pas ou fait 0 ko, le fichier n'est pas traité
+            if [[ ! -f "$outputfile" || ! -s "$outputfile" ]]; then
                 unprocessed_count=$((unprocessed_count+1))
             fi
         done < <(find "$INPUT_DIR" -type f \(
