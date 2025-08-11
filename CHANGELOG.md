@@ -1,5 +1,17 @@
-
 # CHANGELOG
+
+## [3.2] - 2025-08-11
+
+### Highlights
+
+- **Discord notifications**: Added via Webhook for job start, success, failure, and global processing end.
+- **Advanced file status management**: Unique end notification and handling of empty output files.
+- **Job pool refactoring**: Increased robustness with PID table and removal of finished jobs.
+- **File stability checks**: Ensures files are stable and not opened by another process before processing.
+- **Find command syntax correction**: Escaped parentheses in find commands.
+- **Global end notification**: Sent every time the input folder becomes empty again.
+
+---
 
 ## [3.1] - July 2025
 
