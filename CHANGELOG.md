@@ -1,4 +1,18 @@
+
 # CHANGELOG
+
+## [3.1] - July 2025
+
+### Highlights
+
+- **Extension filtering**: Only compatible multimedia files are processed (explicit list of extensions).
+- **Improved script header**: More detailed description, author, and versioning.
+- **Robust file handling**: `.log` files are ignored with an extra security check.
+- **Automatic dependency installation**: ffmpeg, vainfo, QSV drivers, etc. installed at first run.
+- **Enhanced documentation**: Comments and usage instructions improved for Docker environments.
+- **No breaking changes**: All previous 3.0 features are preserved.
+
+---
 
 ## [3.0] - June 2025
 
