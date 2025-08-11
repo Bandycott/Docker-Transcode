@@ -18,6 +18,7 @@
 #       - Début, succès, échec et fin globale du traitement de chaque fichier
 #       - Gestion avancée pour éviter les doublons et suivre l'état de chaque fichier
 #   - Un fichier de sortie de 0 ko est considéré comme non traité (pour la notification globale)
+#   - Un fichier n'est traité que si sa taille est stable et qu'il n'est pas ouvert par un autre processus (lsof)
 #   - Ignoré : fichiers .log
 #   - Pool de conversions en parallèle : MAX_JOBS (nouveau job dès qu'un slot se libère)
 #   - Dépendances installées automatiquement au premier lancement (ffmpeg, vainfo, drivers QSV...)
@@ -36,7 +37,7 @@
 #
 # Auteur : Bandycott
 # Date   : Août 2025
-# Version: 3.2 (Notifications Discord Webhook, gestion avancée des statuts de traitement, détection des fichiers de sortie vides)
+# Version: 3.2 (Notifications Discord Webhook, gestion avancée des statuts de traitement, détection des fichiers de sortie vides, vérification lsof et stabilité avant traitement)
 
 # --- Variables Configurables via l'Environnement ---
 DELETE_SOURCE="${DELETE_SOURCE:-true}"
@@ -77,6 +78,34 @@ install_dependencies() {
             echo "ERREUR: Échec de l'installation des dépendances." | tee -a "$GLOBAL_ERROR_LOG"
             exit 1
         fi
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# is_file_stable
+# But : Vérifie que la taille du fichier ne change pas pendant un intervalle donné (5s).
+# Entrées :
+#   $1 : Chemin du fichier à vérifier
+# Sorties : 0 si stable, 1 sinon
+# ------------------------------------------------------------------------------
+is_file_stable() {
+    local file="$1"
+    local delay=5
+    if [[ ! -f "$file" ]]; then
+        return 1
+    fi
+    # Vérifier si le fichier est ouvert par un autre processus
+    if lsof "$file" 2>/dev/null | grep -q "$file"; then
+        return 1
+    fi
+    local size1 size2
+    size1=$(stat -c %s "$file")
+    sleep "$delay"
+    size2=$(stat -c %s "$file")
+    if [[ "$size1" -eq "$size2" ]]; then
+        return 0
+    else
+        return 1
     fi
 }
 
@@ -391,6 +420,12 @@ main_loop() {
 
             # Ignorer les fichiers .log
             if [[ "${extension,,}" == "log" ]]; then
+                continue
+            fi
+
+            # Vérifier la stabilité du fichier (copie en cours ?)
+            if ! is_file_stable "$infile_full_path"; then
+                echo "INFO: Fichier ignoré (copie en cours ou instable) : $relpath"
                 continue
             fi
 
