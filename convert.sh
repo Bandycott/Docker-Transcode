@@ -527,22 +527,27 @@ main_loop() {
             if [[ ! -f "$outputfile" || ! -s "$outputfile" ]]; then
                 unprocessed_count=$((unprocessed_count+1))
             fi
-        done < <(find "$INPUT_DIR" -type f \(
-            -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o 
-            -iname "*.mov" -o -iname "*.wmv" -o -iname "*.flv" -o 
-            -iname "*.webm" -o -iname "*.mpeg" -o -iname "*.mpg" -o 
-            -iname "*.m4v" -o -iname "*.ts" -o -iname "*.mts" -o 
-            -iname "*.m2ts" -o -iname "*.3gp" -o -iname "*.vob" -o 
-            -iname "*.ogv" -o -iname "*.divx" -o -iname "*.f4v" -o 
-            -iname "*.rm" -o -iname "*.rmvb" -o -iname "*.asf" -o 
-            -iname "*.mxf" -o -iname "*.nut" -o -iname "*.amv" 
+        done < <(find "$INPUT_DIR" -type f \( \
+            -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o \
+            -iname "*.mov" -o -iname "*.wmv" -o -iname "*.flv" -o \
+            -iname "*.webm" -o -iname "*.mpeg" -o -iname "*.mpg" -o \
+            -iname "*.m4v" -o -iname "*.ts" -o -iname "*.mts" -o \
+            -iname "*.m2ts" -o -iname "*.3gp" -o -iname "*.vob" -o \
+            -iname "*.ogv" -o -iname "*.divx" -o -iname "*.f4v" -o \
+            -iname "*.rm" -o -iname "*.rmvb" -o -iname "*.asf" -o \
+            -iname "*.mxf" -o -iname "*.nut" -o -iname "*.amv" \
         \) -print0)
+        local global_done_flag="/tmp/.discord_global_done.flag"
         if [[ "$unprocessed_count" -eq 0 ]]; then
-            # Notification de fin de traitement global envoyée une seule fois grâce à un fichier flag
-            local global_done_flag="/tmp/.discord_global_done.flag"
+            # Notification de fin de traitement global envoyée à chaque fois que le dossier redevient vide
             if [[ ! -f "$global_done_flag" ]]; then
                 send_discord_webhook "🎉 Tous les fichiers présents dans le dossier d'entrée ont été traités (succès ou échec)."
                 touch "$global_done_flag"
+            fi
+        else
+            # Si des fichiers sont à traiter, supprimer le flag pour permettre une nouvelle notification plus tard
+            if [[ -f "$global_done_flag" ]]; then
+                rm -f "$global_done_flag"
             fi
         fi
 
